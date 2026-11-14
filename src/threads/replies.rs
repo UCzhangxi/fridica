@@ -69,7 +69,6 @@ pub(super) fn render(
     } else {
         String::new()
     };
-    reply.text = super::dispatcher::hoist(&reply.text);
     // A few lines of details are not worth a file: they go in the message.
     let combined = format!("{}\n\n{}", reply.text.trim_end(), reply.details.trim());
     if !reply.details.trim().is_empty()
@@ -79,6 +78,7 @@ pub(super) fn render(
         reply.text = combined;
         reply.details.clear();
     }
+    reply.text = super::dispatcher::hoist(&reply.text);
     (reply.text, reply.details) = crate::core::render::reply(
         &reply.text,
         &reply.details,

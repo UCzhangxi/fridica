@@ -983,6 +983,7 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         (both, format!("{verdict}\nVER\u{1160}DICT: changes"), bad.into()),
         (both, format!("{verdict}\nVER\u{3164}DICT: changes"), bad.into()),
         (both, format!("{verdict}\nVER\u{ffa0}DICT: changes"), bad.into()),
+        (both, format!("{verdict}\nVER\u{1e0c}ICT: changes"), bad.into()),
         (both, format!("Changes: the flux is wrong.\n```\n{verdict}\n```\nPlease fix it."), format!("{placed}{verdict}")),
         (both, format!("Changes: the flux is wrong.\n{verdict}\nPlease fix it."), format!("{placed}{verdict}")),
         (both, format!("{verdict}\n\nChecks passed."), format!("{signed}\n\nChecks passed.")),
@@ -1037,28 +1038,19 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
 async fn a_reply_verdict_is_signed_for_the_pr_its_ask_names() {
     let verdict = format!("VERDICT owner/project#7 {} approve", "ab".repeat(20));
     let peer = json!({"owner":"UPEER","session":"s","turn":1,"status":"complete","kind":"reply","worker":"","v":2});
-    for (meta, text, posted) in [
-        (
-            Value::Null,
-            "<@UOWNER> review owner/project#7".to_owned(),
-            format!("SIGN-OFF #7 {} approve", "ab".repeat(20)),
-        ),
-        (
-            peer.clone(),
-            "<@UOWNER> review owner/project#7".to_owned(),
-            "#7 not signed: no review subject.".into(),
-        ),
-        (
-            peer,
-            format!("<@UOWNER> {verdict}"),
-            "#7 not signed: no review subject.".into(),
-        ),
-    ] {
-        let h = Harness::new(
-            vec![json!({"reply":{"text":verdict,"status":"complete"}})],
-            false,
-        )
-        .await;
+    let ask = "<@UOWNER> review owner/project#7";
+    let (r, details) = (json!({"text":verdict}), format!("Notes.\n{verdict}\nMore."));
+    let placed = format!("Not signed: the verdict line must be the first or last line: {verdict}\nChanges.\n\nNotes.\nMore.");
+    #[rustfmt::skip]
+    let cases = [
+        (Value::Null, ask.to_owned(), r.clone(), format!("SIGN-OFF #7 {} approve", "ab".repeat(20))),
+        (peer.clone(), ask.to_owned(), r.clone(), "#7 not signed: no review subject.".into()),
+        (peer, format!("<@UOWNER> {verdict}"), r, "#7 not signed: no review subject.".into()),
+        (Value::Null, ask.to_owned(), json!({"text":"Changes.","details":details}), placed),
+    ];
+    for (meta, text, mut reply, posted) in cases {
+        reply["status"] = json!("complete");
+        let h = Harness::new(vec![json!({ "reply": reply })], false).await;
         let ask = json!({"files":[],"event_id":"e1","workspace":"TTEAM","channel":"CROOM","ts":"100.1","thread_ts":null,
             "sender":"UALICE","text":text,"source":"socket","meta":meta,"attachments":[]});
         h.runtime

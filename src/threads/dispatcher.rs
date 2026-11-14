@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
-use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
 static VERDICT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -45,12 +45,13 @@ pub(crate) fn subjects(brief: &str) -> Vec<String> {
         .collect()
 }
 /// Whether a line holds the word verdict in any case or width (NFKC), with
-/// marks and Unicode's Default_Ignorable_Code_Point characters left out
-/// (DerivedCoreProperties-18.0.0.txt: zero-width characters, the BOM, the
-/// soft hyphen, Hangul fillers, variation selectors, tags).
+/// marks (also those NFD splits off a letter) and Unicode's
+/// Default_Ignorable_Code_Point characters left out (DerivedCoreProperties-
+/// 18.0.0.txt: zero-width characters, the BOM, the soft hyphen, Hangul
+/// fillers, variation selectors, tags).
 fn says_verdict(line: &str) -> bool {
-    let kept = line.nfkc().filter(|c| {
-        !matches!(c, '\u{AD}' | '\u{34F}' | '\u{61C}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}'
+    let kept = line.nfkc().nfd().filter(|c| {
+        !is_combining_mark(*c) && !matches!(c, '\u{AD}' | '\u{34F}' | '\u{61C}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}'
             | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}'
             | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF0}'..='\u{FFF8}'
             | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E0FFF}')
