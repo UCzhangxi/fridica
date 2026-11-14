@@ -929,6 +929,14 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         (both, format!("~~~\n{verdict}\n~~~"), format!("~~~\n{verdict}\n~~~")),
         (both, format!("```x```\n{verdict}"), format!("SIGN-OFF #7 {head} approve\n```x```")),
         ("Review owner/project#8", format!("VERDICT owner/project#8 {head} approve"), "#8 not signed: head not read: could not reach GitHub.".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#07 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
+        (both, format!("{verdict}\nVERDICT Owner/Project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#7 abab approve"), "#7 not signed: conflicting verdicts.\nNot signed: malformed".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#7 {head} CHANGES"), "#7 not signed: conflicting verdicts.\nNot signed: malformed".into()),
+        (both, format!("````\n```\n{verdict}\n````"), format!("````\n```\n{verdict}\n````")),
+        (both, format!("```\n~~~\n{verdict}\n```"), format!("```\n~~~\n{verdict}\n```")),
+        (both, format!("Checks passed.\n\n    {verdict}"), format!("Checks passed.\n\n    {verdict}")),
+        (both, format!("- checks\n    {verdict}"), format!("SIGN-OFF #7 {head} approve\n- checks")),
     ] {
         let delegation = json!({"reply":{"text":"Running checks.","status":"complete"},"delegations":[{"brief":brief,"machine":"local","workspace":"project"}]});
         let h = Harness::new(vec![delegation], false).await;
@@ -958,34 +966,54 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
     );
 }
 
-/// A parent's own verdict line is signed for a PR the ask it answers names.
+/// A parent's own verdict line is signed for a PR a person's ask names, not
+/// one another agent's message names.
 #[tokio::test]
 async fn a_reply_verdict_is_signed_for_the_pr_its_ask_names() {
     let verdict = format!("VERDICT owner/project#7 {} approve", "ab".repeat(20));
-    let h = Harness::new(
-        vec![json!({"reply":{"text":verdict,"status":"complete"}})],
-        false,
-    )
-    .await;
-    let ask = json!({"files":[],"event_id":"e1","workspace":"TTEAM","channel":"CROOM","ts":"100.1","thread_ts":null,
-        "sender":"UALICE","text":"<@UOWNER> review owner/project#7","source":"socket","meta":null,"attachments":[]});
-    h.runtime
-        .intake(serde_json::from_value(ask).unwrap())
-        .await
-        .unwrap();
-    h.runtime.pass().await.unwrap();
-    let sent = h
-        .sink
-        .calls
-        .lock()
-        .unwrap()
-        .last()
-        .unwrap()
-        .post
-        .text
-        .clone();
-    assert_eq!(sent, format!("SIGN-OFF #7 {} approve", "ab".repeat(20)));
-    h.runtime.close().await.unwrap();
+    let peer = json!({"owner":"UPEER","session":"s","turn":1,"status":"complete","kind":"reply","worker":"","v":2});
+    for (meta, text, posted) in [
+        (
+            Value::Null,
+            "<@UOWNER> review owner/project#7".to_owned(),
+            format!("SIGN-OFF #7 {} approve", "ab".repeat(20)),
+        ),
+        (
+            peer.clone(),
+            "<@UOWNER> review owner/project#7".to_owned(),
+            "#7 not signed: no review subject.".into(),
+        ),
+        (
+            peer,
+            format!("<@UOWNER> {verdict}"),
+            "#7 not signed: no review subject.".into(),
+        ),
+    ] {
+        let h = Harness::new(
+            vec![json!({"reply":{"text":verdict,"status":"complete"}})],
+            false,
+        )
+        .await;
+        let ask = json!({"files":[],"event_id":"e1","workspace":"TTEAM","channel":"CROOM","ts":"100.1","thread_ts":null,
+            "sender":"UALICE","text":text,"source":"socket","meta":meta,"attachments":[]});
+        h.runtime
+            .intake(serde_json::from_value(ask).unwrap())
+            .await
+            .unwrap();
+        h.runtime.pass().await.unwrap();
+        let sent = h
+            .sink
+            .calls
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .post
+            .text
+            .clone();
+        assert_eq!(sent, posted);
+        h.runtime.close().await.unwrap();
+    }
 }
 
 #[tokio::test]

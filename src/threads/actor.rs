@@ -881,8 +881,8 @@ async fn commit(
                     ids.dedup();
                     ids.join(",").chars().take(64).collect::<String>()
                 } else {String::new()};
-                // The PRs its jobs were dispatched to review, or the ask names: only these are signed.
-                let review:Vec<String>=request.trigger["results"].as_array().into_iter().flatten().filter_map(|r|r["brief"].as_str()).chain(request.trigger["message"]["text"].as_str()).flat_map(super::dispatcher::subjects).collect();
+                // The PRs its jobs were dispatched to review, or a person's ask (no agent meta) names: only these are signed.
+                let review:Vec<String>=request.trigger["results"].as_array().into_iter().flatten().filter_map(|r|r["brief"].as_str()).chain(request.trigger["message"]["text"].as_str().filter(|_|request.trigger["message"]["meta"].is_null())).flat_map(super::dispatcher::subjects).collect();
                 let mut meta=json!({"owner":owner,"session":session,"turn":turn,"status":reply.status.as_str(),"kind":if is_result {"report"} else {"reply"},"worker":worker,"v":2});
                 if !review.is_empty() {meta["review"]=json!(review);}
                 u.label_post(post,&meta.to_string(),request.trigger["message"]["event_id"].as_str().or_else(||request.trigger["origin"]["event_id"].as_str()).or_else(||request.trigger["refused"]["trigger_event"].as_str()).unwrap_or(""),is_result)?;

@@ -590,7 +590,7 @@ Alice:   can you fix snowy and rerun?
   summary in the thread and attach the rest as a Markdown file.
 - **Sign-offs.** A line `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` (`approve`,
   `approve (code review)` or `changes`) in a reply or report, outside code fences
-  and for a PR the ask or the job's brief names, is not
+  and for a PR a person's ask or the job's brief names, is not
   posted as written: when it is sent, Fridica reads the PR's head and puts
   `SIGN-OFF #<PR> <sha> <verdict>` first only if the head is still `<sha>`, else
   says why it signs nothing (provision 04).

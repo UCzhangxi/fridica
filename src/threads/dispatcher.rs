@@ -23,27 +23,49 @@ use std::{
 
 static VERDICT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"^VERDICT (\S+)#([0-9]{1,9}) ([0-9a-f]{40}) (approve \(code review\)|approve|changes)$",
+        r"^VERDICT (\S+)#([0-9]{1,9})\b(?: ([0-9a-f]{40}) (approve \(code review\)|approve|changes)$)?",
     )
     .unwrap()
 });
 static SUBJECT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"([\w.-]+/[\w.-]+)(?:#|/pull/)([0-9]{1,9})").unwrap());
+static LIST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([-*+]|[0-9]{1,9}[.)])( |$)").unwrap());
+/// The PR a verdict-shaped line or a brief names: (lowercased owner/repo, number).
+fn key(m: &regex::Captures) -> (String, u64) {
+    (m[1].to_lowercase(), m[2].parse().unwrap_or(0))
+}
 
 /// The PRs a job brief names (`<owner>/<repo>#<PR>` or a pull URL): the only
 /// ones its verdict lines may sign.
 pub(crate) fn subjects(brief: &str) -> Vec<String> {
     let names = SUBJECT.captures_iter(brief);
-    names.map(|m| format!("{}#{}", &m[1], &m[2])).collect()
+    names
+        .map(|m| format!("{}#{}", key(&m).0, key(&m).1))
+        .collect()
 }
-/// A text's verdict lines outside code fences, and its other lines.
+/// A text's verdict lines outside code (CommonMark fences, and lines indented
+/// 4 spaces outside a list), and its other lines.
 pub(crate) fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>) {
-    let mut fenced = false;
+    let (mut fence, mut list) = (None, false);
     text.lines().partition(|line| {
-        let line = line.trim_start();
-        let fence = ["```", "~~~"].into_iter().find(|f| line.starts_with(f));
-        fenced ^= fence.is_some_and(|f| line.matches(f).count() % 2 == 1);
-        !fenced && line.starts_with("VERDICT ")
+        let body = line.trim_start();
+        let indent = line.len() - body.len();
+        let c = body.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = c.map_or(0, |c| body.len() - body.trim_start_matches(c).len());
+        match (fence, c) {
+            (Some((f, n)), Some(c)) if c == f && run >= n && body.trim_end().len() == run => {
+                fence = None
+            }
+            (None, Some(c))
+                if run >= 3 && indent < 4 && !(c == '`' && body[run..].contains('`')) =>
+            {
+                fence = Some((c, run))
+            }
+            _ if fence.is_none() && indent < 4 && !body.is_empty() => list = LIST.is_match(body),
+            _ => {}
+        }
+        fence.is_none() && (indent < 4 || list) && body.starts_with("VERDICT ")
     })
 }
 /// The text with its verdict lines first, so a split keeps them in the post.
@@ -72,19 +94,17 @@ impl<D: Delivery> Dispatcher<D> {
     async fn sign(&self, text: &str, review: &[String]) -> String {
         let (lines, rest) = verdicts(text);
         let (mut top, mut first) = (vec![], None);
-        let parsed: Vec<_> = lines
-            .iter()
-            .filter_map(|l| VERDICT.captures(l.trim()))
-            .collect();
-        for line in &lines {
-            let Some(m) = VERDICT.captures(line.trim()) else {
+        let parsed: Vec<_> = lines.iter().map(|l| VERDICT.captures(l.trim())).collect();
+        let said = |m: &regex::Captures| [3, 4].map(|i| m.get(i).map(|g| g.as_str().to_owned()));
+        for (line, m) in lines.iter().zip(&parsed) {
+            let Some(m) = m.as_ref().filter(|m| m.get(3).is_some()) else {
                 top.push(format!(
                     "Not signed: malformed verdict line: {}",
                     line.trim()
                 ));
                 continue;
             };
-            let (repo, n, sha, verdict) = (&m[1], m[2].parse().unwrap_or(0), &m[3], &m[4]);
+            let ((repo, n), sha, verdict) = (key(m), &m[3], &m[4]);
             let live = match &self.heads {
                 _ if review.is_empty() => Err("no review subject".into()),
                 _ if !review.contains(&format!("{repo}#{n}")) => {
@@ -92,16 +112,17 @@ impl<D: Delivery> Dispatcher<D> {
                 }
                 _ if parsed
                     .iter()
-                    .any(|o| o[1] == m[1] && o[2] == m[2] && (&o[3], &o[4]) != (&m[3], &m[4])) =>
+                    .flatten()
+                    .any(|o| key(o) == key(m) && said(o) != said(m)) =>
                 {
                     Err("conflicting verdicts".into())
                 }
-                _ if *first.get_or_insert_with(|| repo.to_owned()) != repo => {
+                _ if *first.get_or_insert_with(|| repo.clone()) != repo => {
                     Err("one repository per message".into())
                 }
                 Some(api) => api
                     .get(Request {
-                        repo: repo.into(),
+                        repo: repo.clone(),
                         operation: Operation::Pull { number: n },
                     })
                     .await
