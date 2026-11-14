@@ -40,8 +40,10 @@ pub(crate) fn subjects(brief: &str) -> Vec<String> {
 pub(crate) fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>) {
     let mut fenced = false;
     text.lines().partition(|line| {
-        fenced ^= line.trim_start().starts_with("```");
-        !fenced && line.trim_start().starts_with("VERDICT ")
+        let line = line.trim_start();
+        let fence = ["```", "~~~"].into_iter().find(|f| line.starts_with(f));
+        fenced ^= fence.is_some_and(|f| line.matches(f).count() % 2 == 1);
+        !fenced && line.starts_with("VERDICT ")
     })
 }
 /// The text with its verdict lines first, so a split keeps them in the post.
@@ -70,7 +72,11 @@ impl<D: Delivery> Dispatcher<D> {
     async fn sign(&self, text: &str, review: &[String]) -> String {
         let (lines, rest) = verdicts(text);
         let (mut top, mut first) = (vec![], None);
-        for line in lines {
+        let parsed: Vec<_> = lines
+            .iter()
+            .filter_map(|l| VERDICT.captures(l.trim()))
+            .collect();
+        for line in &lines {
             let Some(m) = VERDICT.captures(line.trim()) else {
                 top.push(format!(
                     "Not signed: malformed verdict line: {}",
@@ -83,6 +89,12 @@ impl<D: Delivery> Dispatcher<D> {
                 _ if review.is_empty() => Err("no review subject".into()),
                 _ if !review.contains(&format!("{repo}#{n}")) => {
                     Err(format!("the job reviews {}", review.join(", ")))
+                }
+                _ if parsed
+                    .iter()
+                    .any(|o| o[1] == m[1] && o[2] == m[2] && (&o[3], &o[4]) != (&m[3], &m[4])) =>
+                {
+                    Err("conflicting verdicts".into())
                 }
                 _ if *first.get_or_insert_with(|| repo.to_owned()) != repo => {
                     Err("one repository per message".into())

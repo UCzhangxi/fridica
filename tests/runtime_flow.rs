@@ -890,19 +890,20 @@ async fn a_report_carrying_a_sign_off_goes_to_the_parent_instead_of_the_fast_pat
     h.runtime.close().await.unwrap();
 }
 
-/// PR #7's live head is ab..ab; every other PR's is cd..cd.
+/// PR #7's live head is ab..ab, #8's cannot be read, every other PR's is cd..cd.
 struct Head;
 impl fridica::github::client::Api for Head {
     fn get(
         &self,
         r: fridica::github::client::Request,
     ) -> AdapterFuture<'_, Result<Value, fridica::github::client::Failure>> {
-        let seven = matches!(
-            r.operation,
-            fridica::github::client::Operation::Pull { number: 7 }
-        );
-        let sha = if seven { "ab" } else { "cd" }.repeat(20);
-        Box::pin(async move { Ok(json!({"head":{"sha":sha}})) })
+        use fridica::github::client::{Failure, Operation::Pull};
+        let sha = match r.operation {
+            Pull { number: 7 } => Ok("ab".repeat(20)),
+            Pull { number: 8 } => Err(Failure::Unavailable),
+            _ => Ok("cd".repeat(20)),
+        };
+        Box::pin(async move { Ok(json!({"head":{"sha":sha?}})) })
     }
 }
 /// A single-job report's verdict line is signed by the daemon, with no
@@ -924,6 +925,10 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         (both, "VERDICT owner/project#7 abab APPROVE".into(), "Not signed: malformed verdict line: VERDICT owner/project#7 abab APPROVE".into()),
         (both, format!("{}\n{verdict}", "x".repeat(9000)), format!("SIGN-OFF #7 {head} approve\nxxx")),
         (both, "Checks passed.".into(), "Checks passed.".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
+        (both, format!("~~~\n{verdict}\n~~~"), format!("~~~\n{verdict}\n~~~")),
+        (both, format!("```x```\n{verdict}"), format!("SIGN-OFF #7 {head} approve\n```x```")),
+        ("Review owner/project#8", format!("VERDICT owner/project#8 {head} approve"), "#8 not signed: head not read: could not reach GitHub.".into()),
     ] {
         let delegation = json!({"reply":{"text":"Running checks.","status":"complete"},"delegations":[{"brief":brief,"machine":"local","workspace":"project"}]});
         let h = Harness::new(vec![delegation], false).await;
@@ -951,6 +956,36 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         got.iter().all(|(_, kept)| *kept),
         "history differs from the post: {got:?}"
     );
+}
+
+/// A parent's own verdict line is signed for a PR the ask it answers names.
+#[tokio::test]
+async fn a_reply_verdict_is_signed_for_the_pr_its_ask_names() {
+    let verdict = format!("VERDICT owner/project#7 {} approve", "ab".repeat(20));
+    let h = Harness::new(
+        vec![json!({"reply":{"text":verdict,"status":"complete"}})],
+        false,
+    )
+    .await;
+    let ask = json!({"files":[],"event_id":"e1","workspace":"TTEAM","channel":"CROOM","ts":"100.1","thread_ts":null,
+        "sender":"UALICE","text":"<@UOWNER> review owner/project#7","source":"socket","meta":null,"attachments":[]});
+    h.runtime
+        .intake(serde_json::from_value(ask).unwrap())
+        .await
+        .unwrap();
+    h.runtime.pass().await.unwrap();
+    let sent = h
+        .sink
+        .calls
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .post
+        .text
+        .clone();
+    assert_eq!(sent, format!("SIGN-OFF #7 {} approve", "ab".repeat(20)));
+    h.runtime.close().await.unwrap();
 }
 
 #[tokio::test]

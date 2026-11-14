@@ -98,6 +98,29 @@ async fn delivery_matches_batch_order_and_records_self_history_and_metadata() {
     );
 }
 
+/// With GitHub off a verdict line is refused with the reason, and the
+/// thread history keeps that line.
+#[tokio::test]
+async fn a_verdict_is_not_signed_when_github_is_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path().join("db")).await.unwrap();
+    let mut p = post(
+        &format!("VERDICT o/r#7 {} approve", "ab".repeat(20)),
+        "100.1",
+        "",
+    );
+    p.meta = Some(json!({"owner":"UOWNER","kind":"reply","review":["o/r#7"]}));
+    outbox::enqueue(&s, p, 1.).await.unwrap();
+    let d = dispatcher(&s, Arc::default(), Arc::new(ReplayClock::new(2.)));
+    assert_eq!(d.drain(1).await.unwrap(), 1);
+    let sql = "SELECT text FROM messages WHERE source='self'";
+    let kept: String = s
+        .call(move |c| Ok(c.query_row(sql, [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(kept, "#7 not signed: head not read: GitHub is off.");
+}
+
 #[tokio::test]
 async fn ambiguity_blocks_descendants_and_never_automatically_resends() {
     let dir = tempfile::tempdir().unwrap();
