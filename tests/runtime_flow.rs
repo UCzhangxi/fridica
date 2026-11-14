@@ -914,6 +914,7 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
     let (head, moved) = ("ab".repeat(20), "cd".repeat(20));
     let verdict = format!("VERDICT owner/project#7 {head} approve");
     let both = "Review owner/project#7 and https://github.com/owner/project/pull/9";
+    let bad = "#7 not signed: unparsed verdict line.\nNot signed: unparsed verdict line: ";
     let mut got = vec![];
     for (brief, report, posted) in [
         (both, format!("Checks passed.\n{verdict}\n{verdict}"), format!("SIGN-OFF #7 {head} approve\nChecks passed.")),
@@ -922,7 +923,7 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         (both, format!("```\n{verdict}\n```"), format!("```\n{verdict}\n```")),
         ("Review owner/project#9", verdict.clone(), "#7 not signed: the job reviews owner/project#9.".into()),
         ("Run focused checks", verdict.clone(), "#7 not signed: no review subject.".into()),
-        (both, "VERDICT owner/project#7 abab APPROVE".into(), "Not signed: malformed verdict line: VERDICT owner/project#7 abab APPROVE".into()),
+        (both, "VERDICT owner/project#7 abab APPROVE".into(), "Not signed: unparsed verdict line: VERDICT owner/project#7 abab APPROVE".into()),
         (both, format!("{}\n{verdict}", "x".repeat(9000)), format!("SIGN-OFF #7 {head} approve\nxxx")),
         (both, "Checks passed.".into(), "Checks passed.".into()),
         (both, format!("{verdict}\nVERDICT owner/project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
@@ -931,12 +932,23 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         ("Review owner/project#8", format!("VERDICT owner/project#8 {head} approve"), "#8 not signed: head not read: could not reach GitHub.".into()),
         (both, format!("{verdict}\nVERDICT owner/project#07 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
         (both, format!("{verdict}\nVERDICT Owner/Project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
-        (both, format!("{verdict}\nVERDICT owner/project#7 abab approve"), "#7 not signed: conflicting verdicts.\nNot signed: malformed".into()),
-        (both, format!("{verdict}\nVERDICT owner/project#7 {head} CHANGES"), "#7 not signed: conflicting verdicts.\nNot signed: malformed".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#7 abab approve"), format!("{bad}VERDICT owner/project#7 abab")),
+        (both, format!("{verdict}\nVERDICT owner/project#7 {head} CHANGES"), format!("{bad}VERDICT owner/project#7 {head} CHANGES")),
         (both, format!("````\n```\n{verdict}\n````"), format!("````\n```\n{verdict}\n````")),
         (both, format!("```\n~~~\n{verdict}\n```"), format!("```\n~~~\n{verdict}\n```")),
-        (both, format!("Checks passed.\n\n    {verdict}"), format!("Checks passed.\n\n    {verdict}")),
-        (both, format!("- checks\n    {verdict}"), format!("SIGN-OFF #7 {head} approve\n- checks")),
+        (both, format!("Checks passed.\n\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
+        (both, format!("- checks\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
+        (both, format!("Checks passed.\n\n\t{verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
+        (both, format!("* * *\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
+        (both, format!("```\n    ```\n{verdict}\n```"), format!("```\n    ```\n{verdict}\n```")),
+        (both, format!("- item\n    ```\n{verdict}\n    ```"), format!("- item\n    ```\n{verdict}\n    ```")),
+        (both, format!("{verdict}\n> {verdict}"), format!("{bad}> {verdict}")),
+        (both, format!("{verdict}\nVERDICT  owner/project#7 {head} changes"), format!("{bad}VERDICT  owner")),
+        (both, format!("{verdict}\nVERDICT https://github.com/owner/project/pull/7 {head} changes"), format!("{bad}VERDICT https")),
+        (both, format!("{verdict}\nVERDICT #7 {head} changes"), format!("{bad}VERDICT #7")),
+        (both, format!("{verdict}\nVERDICT owner/project #7 {head} changes"), format!("{bad}VERDICT owner/project #7")),
+        (both, format!("{verdict}\nVERDICT owner/project#\u{ff17} {head} changes"), format!("{bad}VERDICT owner/project#")),
+        (both, format!("{verdict}\nVERDICT owner/project#7x {head} changes"), format!("{bad}VERDICT owner/project#7x")),
     ] {
         let delegation = json!({"reply":{"text":"Running checks.","status":"complete"},"delegations":[{"brief":brief,"machine":"local","workspace":"project"}]});
         let h = Harness::new(vec![delegation], false).await;
