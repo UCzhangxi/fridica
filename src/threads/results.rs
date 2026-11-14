@@ -97,6 +97,7 @@ pub(super) fn direct(
         })
         .map(|o| o["id"].clone())
         .collect();
+    let report: &str = &super::dispatcher::hoist(report);
     let (text, details) = if report.chars().count() > limit {
         let text: String = report.chars().take(limit.saturating_sub(40)).collect();
         (format!("{text}\n\nFull report attached."), report)

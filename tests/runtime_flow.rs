@@ -906,27 +906,27 @@ impl fridica::github::client::Api for Head {
     }
 }
 /// A single-job report's verdict line is signed by the daemon, with no
-/// parent turn, only if the PR's head read at posting is the one reviewed.
+/// parent turn, only outside code fences, for a PR the job's brief names, on
+/// the head read at posting; the thread history keeps what was posted.
 #[tokio::test]
 async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn() {
     let (head, moved) = ("ab".repeat(20), "cd".repeat(20));
     let verdict = format!("VERDICT owner/project#7 {head} approve");
-    for (report, posted) in [
-        (
-            format!("Checks passed.\n{verdict}"),
-            format!("SIGN-OFF #7 {head} approve\nChecks passed."),
-        ),
-        (
-            format!("VERDICT owner/project#9 {head} changes\nChecks passed."),
-            format!("#9 not signed: its head moved from {head} to {moved}.\nChecks passed."),
-        ),
-        (
-            format!("{verdict}\nVERDICT other/project#7 {head} changes"),
-            format!("SIGN-OFF #7 {head} approve\n#7 not signed: one repository per message."),
-        ),
-        ("Checks passed.".into(), "Checks passed.".into()),
+    let both = "Review owner/project#7 and https://github.com/owner/project/pull/9";
+    let mut got = vec![];
+    for (brief, report, posted) in [
+        (both, format!("Checks passed.\n{verdict}\n{verdict}"), format!("SIGN-OFF #7 {head} approve\nChecks passed.")),
+        (both, format!("VERDICT owner/project#9 {head} changes\nChecks passed."), format!("#9 not signed: its head moved from {head} to {moved}.\nChecks passed.")),
+        (both, format!("{verdict}\nVERDICT other/project#7 {head} changes"), format!("SIGN-OFF #7 {head} approve\n#7 not signed: the job reviews owner/project#7, owner/project#9.")),
+        (both, format!("```\n{verdict}\n```"), format!("```\n{verdict}\n```")),
+        ("Review owner/project#9", verdict.clone(), "#7 not signed: the job reviews owner/project#9.".into()),
+        ("Run focused checks", verdict.clone(), "#7 not signed: no review subject.".into()),
+        (both, "VERDICT owner/project#7 abab APPROVE".into(), "Not signed: malformed verdict line: VERDICT owner/project#7 abab APPROVE".into()),
+        (both, format!("{}\n{verdict}", "x".repeat(9000)), format!("SIGN-OFF #7 {head} approve\nxxx")),
+        (both, "Checks passed.".into(), "Checks passed.".into()),
     ] {
-        let h = Harness::new(vec![delegate()], false).await;
+        let delegation = json!({"reply":{"text":"Running checks.","status":"complete"},"delegations":[{"brief":brief,"machine":"local","workspace":"project"}]});
+        let h = Harness::new(vec![delegation], false).await;
         h.worker.outcomes.lock().unwrap().push_back(Ok(Outcome {
             result: serde_json::from_value(
                 json!({"status":"done","summary":"done","report":report}),
@@ -939,19 +939,18 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         h.finish(1, 1).await;
         h.runtime.pass().await.unwrap();
         assert_eq!(h.parent.calls.lock().unwrap().len(), 1);
-        let sent = h
-            .sink
-            .calls
-            .lock()
-            .unwrap()
-            .last()
-            .unwrap()
-            .post
-            .text
-            .clone();
-        assert_eq!(sent, posted);
+        let calls = h.sink.calls.lock().unwrap().clone();
+        let sent = calls.iter().rev().find(|c| c.post.kind != "upload").unwrap().post.text.clone();
+        let sql = "SELECT text FROM messages WHERE source='self' ORDER BY id DESC";
+        let kept: String = h.store.call(move |c| Ok(c.query_row(sql, [], |r| r.get(0))?)).await.unwrap();
+        got.push((sent.chars().take(posted.len()).collect::<String>(), kept == sent));
+        assert_eq!(got.last().unwrap().0, posted, "case {}", got.len());
         h.runtime.close().await.unwrap();
     }
+    assert!(
+        got.iter().all(|(_, kept)| *kept),
+        "history differs from the post: {got:?}"
+    );
 }
 
 #[tokio::test]

@@ -15,4 +15,4 @@ Provisions 01 to 03 take precedence over this one.
    - Write `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` (the full 40-character sha you read, a verdict above) on a line of its own instead. Fridica reads the PR's head when it posts the message and puts the sign-off line first only if the head is still that sha; otherwise it says the head moved and does not sign. No re-read before posting is needed.
    - Sign off PRs of one repository per message, since `#<PR>` names no repository. PRs in another repository go in a separate message.
    - No other line of the message may start with "sign-off", in any case. Mention a sign-off mid-sentence instead.
-   - The verdict is yours. A delegated worker never writes a sign-off line; one that read the head line by line may end its report with the verdict line, which Fridica signs as above.
+   - The verdict is yours. A delegated worker never writes a sign-off line; one that read the head line by line may end its report with the verdict line, which Fridica signs as above only for a PR the job's brief names as `<owner>/<repo>#<PR>` or by its URL.
