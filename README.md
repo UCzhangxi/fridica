@@ -589,7 +589,8 @@ Alice:   can you fix snowy and rerun?
   a worker lists are uploaded after the reply. Long replies keep an executive
   summary in the thread and attach the rest as a Markdown file.
 - **Sign-offs.** A line `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` (`approve`,
-  `approve (code review)` or `changes`) in a reply or report, unindented, and for a PR a person's ask or the job's brief names, is not
+  `approve (code review)` or `changes`) as the first or last line of a reply or
+  report, unindented, and for a PR a person's ask or the job's brief names, is not
   posted as written: when it is sent, Fridica reads the PR's head and puts
   `SIGN-OFF #<PR> <sha> <verdict>` first only if the head is still `<sha>`, else
   says why it signs nothing (provision 04). It signs only if no other line

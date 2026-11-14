@@ -45,11 +45,17 @@ pub(crate) fn subjects(brief: &str) -> Vec<String> {
         .collect()
 }
 /// Whether a line holds the word verdict in any case or width (NFKC), with
-/// characters that print nothing, such as a zero-width space, left out.
+/// marks and Unicode's Default_Ignorable_Code_Point characters left out
+/// (DerivedCoreProperties-18.0.0.txt: zero-width characters, the BOM, the
+/// soft hyphen, Hangul fillers, variation selectors, tags).
 fn says_verdict(line: &str) -> bool {
-    let kept = line
-        .nfkc()
-        .filter(|c| c.is_ascii() || c.is_alphanumeric() || c.is_whitespace());
+    let kept = line.nfkc().filter(|c| {
+        !matches!(c, '\u{AD}' | '\u{34F}' | '\u{61C}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}'
+            | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF0}'..='\u{FFF8}'
+            | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E0FFF}')
+            && (c.is_ascii() || c.is_alphanumeric() || c.is_whitespace())
+    });
     kept.collect::<String>().to_lowercase().contains("verdict")
 }
 /// A text's lines holding the word verdict, inside code or not, and the rest.
@@ -57,21 +63,23 @@ fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>) {
     text.lines().partition(|l| says_verdict(l))
 }
 const UNPARSED: &str = "Not signed: unparsed verdict line: ";
+const PLACED: &str = "Not signed: the verdict line must be the first or last line: ";
 /// The text with its verdict lines first, so a cut or split keeps them all in
-/// the post; if one has "VERDICT", a line that does not parse as written
-/// becomes its refusal now, before rendering trims the text.
+/// the post; if one has "VERDICT", a line that does not parse as written, or
+/// is not the text's first or last non-empty line, becomes its refusal now.
 pub(crate) fn hoist(text: &str) -> String {
     let (lines, rest) = verdicts(text);
     if !lines.iter().any(|l| l.contains("VERDICT")) {
         return text.into();
     }
-    let lines =
-        lines.iter().map(
-            |l| match VERDICT.is_match(l.trim_end()) || l.starts_with(UNPARSED) {
-                true => l.to_string(),
-                false => format!("{UNPARSED}{}", l.trim()),
-            },
-        );
+    let mut full = text.lines().filter(|l| !l.trim().is_empty());
+    let ends = [full.next(), full.next_back()];
+    let lines = lines.iter().map(|l| match VERDICT.is_match(l.trim_end()) {
+        true if ends.contains(&Some(l)) => l.to_string(),
+        true => format!("{PLACED}{}", l.trim()),
+        false if l.starts_with(UNPARSED) || l.starts_with(PLACED) => l.to_string(),
+        false => format!("{UNPARSED}{}", l.trim()),
+    });
     let rest = rest.iter().map(|l| l.to_string());
     lines.chain(rest).collect::<Vec<_>>().join("\n")
 }
