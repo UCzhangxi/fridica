@@ -60,6 +60,7 @@ fn dispatcher(s: &Store, adapter: Arc<Fake>, clock: Arc<ReplayClock>) -> Dispatc
         owner: "UOWNER".into(),
         observe_only: false,
         timeout: Duration::from_secs(1),
+        heads: None,
     }
 }
 
@@ -95,6 +96,29 @@ async fn delivery_matches_batch_order_and_records_self_history_and_metadata() {
         serde_json::from_str::<Value>(&metadata).unwrap()["owner"],
         "UOWNER"
     );
+}
+
+/// With GitHub off a verdict line is refused with the reason, and the
+/// thread history keeps that line.
+#[tokio::test]
+async fn a_verdict_is_not_signed_when_github_is_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::open(dir.path().join("db")).await.unwrap();
+    let mut p = post(
+        &format!("VERDICT o/r#7 {} approve", "ab".repeat(20)),
+        "100.1",
+        "",
+    );
+    p.meta = Some(json!({"owner":"UOWNER","kind":"reply","review":["o/r#7"]}));
+    outbox::enqueue(&s, p, 1.).await.unwrap();
+    let d = dispatcher(&s, Arc::default(), Arc::new(ReplayClock::new(2.)));
+    assert_eq!(d.drain(1).await.unwrap(), 1);
+    let sql = "SELECT text FROM messages WHERE source='self'";
+    let kept: String = s
+        .call(move |c| Ok(c.query_row(sql, [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(kept, "#7 not signed: head not read: GitHub is off.");
 }
 
 #[tokio::test]
@@ -262,6 +286,7 @@ async fn delivery_timeout_is_ambiguous_and_never_automatically_resent() {
         owner: "UOWNER".into(),
         observe_only: false,
         timeout: Duration::from_millis(1),
+        heads: None,
     };
     assert_eq!(dispatcher.drain(10).await.unwrap(), 0);
     assert_eq!(state(&s, id).await, "ambiguous");

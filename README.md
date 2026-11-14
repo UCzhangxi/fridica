@@ -588,6 +588,14 @@ Alice:   can you fix snowy and rerun?
   job's `report` is posted directly with no second parent call. Figures and PDFs
   a worker lists are uploaded after the reply. Long replies keep an executive
   summary in the thread and attach the rest as a Markdown file.
+- **Sign-offs.** A line `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` (`approve`,
+  `approve (code review)` or `changes`) as the first or last line of a reply or
+  report, unindented, and for a PR a person's ask or the job's brief names, is not
+  posted as written: when it is sent, Fridica reads the PR's head and puts
+  `SIGN-OFF #<PR> <sha> <verdict>` first only if the head is still `<sha>`, else
+  says why it signs nothing (provision 04). It signs only if no other line
+  of the text sent (short details folded in) holds the word "verdict", in any
+  case, width or accent.
 - **No turn limit.** A thread can go on as long as people keep talking to you.
   Runaway exchanges are stopped by the loop protections below instead: clarifying
   questions (`max_wait_replies`) and turns without progress (`max_no_progress`)

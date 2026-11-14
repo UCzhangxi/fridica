@@ -78,6 +78,7 @@ pub(super) fn render(
         reply.text = combined;
         reply.details.clear();
     }
+    reply.text = super::dispatcher::hoist(&reply.text);
     (reply.text, reply.details) = crate::core::render::reply(
         &reply.text,
         &reply.details,
