@@ -27,8 +27,9 @@ static VERDICT: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static SUBJECT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"([\w.-]+/[\w.-]+)(?:#|/pull/)([0-9]{1,9})").unwrap());
+static SUBJECT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([\w.-]+/[\w.-]+)(?:#|/pull/| (?i:pr|pull) #)([0-9]{1,9})").unwrap()
+});
 /// The PR a verdict line or a brief names: (lowercased owner/repo, number).
 fn key(m: &regex::Captures) -> (String, u64) {
     (m[1].to_lowercase(), m[2].parse().unwrap_or(0))
@@ -43,39 +44,46 @@ pub(crate) fn subjects(brief: &str) -> Vec<String> {
         .collect()
 }
 /// A text's lines outside code fences that start with "verdict" in any case
-/// after bullets, quote markers and emphasis, and its other lines.
-pub(crate) fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>) {
+/// after any non-letters, if one has "VERDICT"; its other lines; and whether
+/// a fence is left open.
+pub(crate) fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>, bool) {
     let mut fence = None;
-    text.lines().partition(|line| {
+    let (lines, rest): (Vec<_>, _) = text.lines().partition(|line| {
         let body = line.trim_start();
         let indent = line.len() - body.len();
         let c = body.chars().next().filter(|c| matches!(c, '`' | '~'));
         let run = c.map_or(0, |c| body.len() - body.trim_start_matches(c).len());
         match (fence, c) {
-            (Some((f, n, i)), Some(c))
-                if c == f && run >= n && indent < i + 4 && body.trim_end().len() == run =>
+            (Some((f, n)), Some(c))
+                if c == f && run >= n && indent < 4 && body.trim_end().len() == run =>
             {
                 fence = None
             }
-            (None, Some(c)) if run >= 3 && !(c == '`' && body[run..].contains('`')) => {
-                fence = Some((c, run, indent))
+            (None, Some(c))
+                if run >= 3 && indent < 4 && !(c == '`' && body[run..].contains('`')) =>
+            {
+                fence = Some((c, run))
             }
             _ => {}
         }
-        let core =
-            body.trim_start_matches(|c: char| c.is_whitespace() || "-*+>_0123456789.)".contains(c));
+        let core = body.trim_start_matches(|c: char| !c.is_alphabetic());
         fence.is_none()
             && core
                 .get(..7)
                 .is_some_and(|w| w.eq_ignore_ascii_case("verdict"))
-    })
+    });
+    match lines.iter().any(|l| l.contains("VERDICT")) {
+        true => (lines, rest, fence.is_some()),
+        false => (vec![], text.lines().collect(), false),
+    }
 }
 const UNPARSED: &str = "Not signed: unparsed verdict line: ";
+const UNCLOSED: &str = "Not signed: unclosed code fence.";
 /// The text with its verdict lines first, so a split keeps them in the post;
-/// a line that does not parse as written becomes its refusal now, before
-/// rendering trims the text and could unindent it.
+/// a line that does not parse as written, or a fence left open, becomes its
+/// refusal now, before rendering trims the text or a split cuts a fence.
 pub(crate) fn hoist(text: &str) -> String {
-    let (lines, rest) = verdicts(text);
+    let (lines, rest, open) = verdicts(text);
     if lines.is_empty() {
         return text.into();
     }
@@ -83,8 +91,9 @@ pub(crate) fn hoist(text: &str) -> String {
         true => l.to_string(),
         false => format!("{UNPARSED}{}", l.trim()),
     });
+    let open = (open && !rest.contains(&UNCLOSED)).then(|| UNCLOSED.to_string());
     let rest = rest.iter().map(|l| l.to_string());
-    lines.chain(rest).collect::<Vec<_>>().join("\n")
+    lines.chain(open).chain(rest).collect::<Vec<_>>().join("\n")
 }
 
 pub struct Dispatcher<D: Delivery> {
@@ -103,7 +112,7 @@ impl<D: Delivery> Dispatcher<D> {
     /// if the PR is one the job's brief names (`review`) and its head, read
     /// now, is still `<sha>`; else why it was not signed.
     async fn sign(&self, text: &str, review: &[String]) -> String {
-        let (lines, rest) = verdicts(text);
+        let (lines, rest, _) = verdicts(text);
         let (mut top, mut first) = (vec![], None);
         // Only an unindented line outside lists and quotes parses; any other
         // verdict-like line signs nothing in the message.
@@ -123,6 +132,7 @@ impl<D: Delivery> Dispatcher<D> {
                 {
                     Err("unparsed verdict line".into())
                 }
+                _ if rest.contains(&UNCLOSED) => Err("unclosed code fence".into()),
                 _ if review.is_empty() => Err("no review subject".into()),
                 _ if !review.contains(&format!("{repo}#{n}")) => {
                     Err(format!("the job reviews {}", review.join(", ")))

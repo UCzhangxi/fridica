@@ -594,7 +594,8 @@ Alice:   can you fix snowy and rerun?
   posted as written: when it is sent, Fridica reads the PR's head and puts
   `SIGN-OFF #<PR> <sha> <verdict>` first only if the head is still `<sha>`, else
   says why it signs nothing (provision 04). Any other line that begins with
-  "verdict" stops every sign-off in the message.
+  "verdict" after any non-letters, or a code fence left open, stops every
+  sign-off in the message.
 - **No turn limit.** A thread can go on as long as people keep talking to you.
   Runaway exchanges are stopped by the loop protections below instead: clarifying
   questions (`max_wait_replies`) and turns without progress (`max_no_progress`)
