@@ -914,34 +914,38 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
     let (head, moved) = ("ab".repeat(20), "cd".repeat(20));
     let verdict = format!("VERDICT owner/project#7 {head} approve");
     let both = "Review owner/project#7 and https://github.com/owner/project/pull/9";
-    let bad = "#7 not signed: unparsed verdict line.\nNot signed: unparsed verdict line: ";
+    let more = "#7 not signed: the word verdict appears on more than one line.";
+    let bad = format!("{more}\nNot signed: unparsed verdict line: ");
+    let bad = bad.as_str();
+    let signed = format!("SIGN-OFF #7 {head} approve");
     let mut got = vec![];
-    for (brief, report, posted) in [
-        (both, format!("Checks passed.\n{verdict}\n{verdict}"), format!("SIGN-OFF #7 {head} approve\nChecks passed.")),
+    #[rustfmt::skip]
+    let cases = [
+        (both, format!("Checks passed.\n{verdict}\n{verdict}"), format!("{more}\nChecks passed.")),
         (both, format!("VERDICT owner/project#9 {head} changes\nChecks passed."), format!("#9 not signed: its head moved from {head} to {moved}.\nChecks passed.")),
-        (both, format!("{verdict}\nVERDICT other/project#7 {head} changes"), format!("SIGN-OFF #7 {head} approve\n#7 not signed: the job reviews owner/project#7, owner/project#9.")),
-        (both, format!("```\n{verdict}\n```"), format!("```\n{verdict}\n```")),
+        (both, format!("{verdict}\nVERDICT other/project#7 {head} changes"), format!("{more}\nVERDICT other/project#7")),
+        (both, format!("```\n{verdict}\n```"), format!("{signed}\n```\n```")),
         ("Review owner/project#9", verdict.clone(), "#7 not signed: the job reviews owner/project#9.".into()),
         ("Run focused checks", verdict.clone(), "#7 not signed: no review subject.".into()),
         (both, "VERDICT owner/project#7 abab APPROVE".into(), "Not signed: unparsed verdict line: VERDICT owner/project#7 abab APPROVE".into()),
-        (both, format!("{}\n{verdict}", "x".repeat(9000)), format!("SIGN-OFF #7 {head} approve\nxxx")),
+        (both, format!("{}\n{verdict}", "x".repeat(9000)), format!("{signed}\nxxx")),
         (both, "Checks passed.".into(), "Checks passed.".into()),
-        (both, format!("{verdict}\nVERDICT owner/project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
-        (both, format!("~~~\n{verdict}\n~~~"), format!("~~~\n{verdict}\n~~~")),
-        (both, format!("```x```\n{verdict}"), format!("SIGN-OFF #7 {head} approve\n```x```")),
+        (both, format!("{verdict}\nVERDICT owner/project#7 {head} changes"), more.into()),
+        (both, format!("~~~\n{verdict}\n~~~"), format!("{signed}\n~~~\n~~~")),
+        (both, format!("```x```\n{verdict}"), format!("{signed}\n```x```")),
         ("Review owner/project#8", format!("VERDICT owner/project#8 {head} approve"), "#8 not signed: head not read: could not reach GitHub.".into()),
-        (both, format!("{verdict}\nVERDICT owner/project#07 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
-        (both, format!("{verdict}\nVERDICT Owner/Project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
+        (both, format!("{verdict}\nVERDICT owner/project#07 {head} changes"), more.into()),
+        (both, format!("{verdict}\nVERDICT Owner/Project#7 {head} changes"), more.into()),
         (both, format!("{verdict}\nVERDICT owner/project#7 abab approve"), format!("{bad}VERDICT owner/project#7 abab")),
         (both, format!("{verdict}\nVERDICT owner/project#7 {head} CHANGES"), format!("{bad}VERDICT owner/project#7 {head} CHANGES")),
-        (both, format!("````\n```\n{verdict}\n````"), format!("````\n```\n{verdict}\n````")),
-        (both, format!("```\n~~~\n{verdict}\n```"), format!("```\n~~~\n{verdict}\n```")),
+        (both, format!("````\n```\n{verdict}\n````"), format!("{signed}\n````\n```\n````")),
+        (both, format!("```\n~~~\n{verdict}\n```"), format!("{signed}\n```\n~~~\n```")),
         (both, format!("Checks passed.\n\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
         (both, format!("- checks\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
         (both, format!("Checks passed.\n\n\t{verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
         (both, format!("* * *\n    {verdict}"), format!("Not signed: unparsed verdict line: {verdict}")),
-        (both, format!("```\n    ```\n{verdict}\n```"), format!("```\n    ```\n{verdict}\n```")),
-        (both, format!("- item\n    ```\n{verdict}\n    ```"), format!("SIGN-OFF #7 {head} approve\n- item\n    ```\n    ```")),
+        (both, format!("```\n    ```\n{verdict}\n```"), format!("{signed}\n```\n    ```\n```")),
+        (both, format!("- item\n    ```\n{verdict}\n    ```"), format!("{signed}\n- item\n    ```\n    ```")),
         (both, format!("{verdict}\n> {verdict}"), format!("{bad}> {verdict}")),
         (both, format!("{verdict}\nVERDICT  owner/project#7 {head} changes"), format!("{bad}VERDICT  owner")),
         (both, format!("{verdict}\nVERDICT https://github.com/owner/project/pull/7 {head} changes"), format!("{bad}VERDICT https")),
@@ -958,12 +962,24 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         (both, format!("{verdict}\n`VERDICT owner/project#7 {head} changes`"), format!("{bad}`VERDICT")),
         (both, format!("{verdict}\n\u{200b}VERDICT owner/project#7 {head} changes"), bad.into()),
         (both, format!("{verdict}\n\u{feff}VERDICT owner/project#7 {head} changes"), bad.into()),
-        (both, format!("{verdict}\n```\nVERDICT owner/project#7 {head} changes"), "#7 not signed: unclosed code fence.\nNot signed: unclosed code fence.\n```".into()),
-        (both, format!("{verdict}\n    ```\nVERDICT owner/project#7 {head} changes"), "#7 not signed: conflicting verdicts.".into()),
+        (both, format!("{verdict}\n```\nVERDICT owner/project#7 {head} changes"), more.into()),
+        (both, format!("{verdict}\n    ```\nVERDICT owner/project#7 {head} changes"), more.into()),
         (both, "Verdict: approve\nChecks passed.".into(), "Verdict: approve\nChecks passed.".into()),
-        ("Review owner/project PR #7", verdict.clone(), format!("SIGN-OFF #7 {head} approve")),
-        ("Review owner/project pull #7", verdict.clone(), format!("SIGN-OFF #7 {head} approve")),
-    ] {
+        ("Review owner/project PR #7", verdict.clone(), signed.clone()),
+        ("Review owner/project pull #7", verdict.clone(), signed.clone()),
+        (both, format!("{verdict}\n:x: VERDICT owner/project#7 {head} changes"), format!("{bad}:x: VERDICT")),
+        (both, format!("{verdict}\n<@U123> VERDICT owner/project#7 {head} changes"), format!("{bad}<@U123> VERDICT")),
+        (both, format!("{verdict}\na) VERDICT owner/project#7 {head} changes"), format!("{bad}a) VERDICT")),
+        (both, format!("{verdict}\ni. VERDICT owner/project#7 {head} changes"), format!("{bad}i. VERDICT")),
+        (both, format!("{verdict}\n\u{3164}VERDICT owner/project#7 {head} changes"), bad.into()),
+        (both, format!("{verdict}\n~~~\nVERDICT owner/project#7 {head} changes\n~~~"), more.into()),
+        (both, format!("{verdict}\n\t```\nVERDICT owner/project#7 {head} changes\n\t```"), more.into()),
+        (both, format!("{verdict}\n\u{a0}```\nVERDICT owner/project#7 {head} changes\n\u{a0}```"), more.into()),
+        (both, format!("{verdict}\n```\n{}\n```", "x".repeat(9000)), format!("{signed}\n```\nxxx")),
+        (both, format!("{verdict}\n\u{ff36}\u{ff25}\u{ff32}\u{ff24}\u{ff29}\u{ff23}\u{ff34}: changes"), bad.into()),
+        (both, format!("{verdict}\nVER\u{200b}DICT: changes"), bad.into()),
+    ];
+    for (brief, report, posted) in cases {
         let delegation = json!({"reply":{"text":"Running checks.","status":"complete"},"delegations":[{"brief":brief,"machine":"local","workspace":"project"}]});
         let h = Harness::new(vec![delegation], false).await;
         h.worker.outcomes.lock().unwrap().push_back(Ok(Outcome {
@@ -979,10 +995,24 @@ async fn a_report_verdict_is_signed_only_on_the_live_head_without_a_parent_turn(
         h.runtime.pass().await.unwrap();
         assert_eq!(h.parent.calls.lock().unwrap().len(), 1);
         let calls = h.sink.calls.lock().unwrap().clone();
-        let sent = calls.iter().rev().find(|c| c.post.kind != "upload").unwrap().post.text.clone();
+        let sent = calls
+            .iter()
+            .rev()
+            .find(|c| c.post.kind != "upload")
+            .unwrap()
+            .post
+            .text
+            .clone();
         let sql = "SELECT text FROM messages WHERE source='self' ORDER BY id DESC";
-        let kept: String = h.store.call(move |c| Ok(c.query_row(sql, [], |r| r.get(0))?)).await.unwrap();
-        got.push((sent.chars().take(posted.len()).collect::<String>(), kept == sent));
+        let kept: String = h
+            .store
+            .call(move |c| Ok(c.query_row(sql, [], |r| r.get(0))?))
+            .await
+            .unwrap();
+        got.push((
+            sent.chars().take(posted.len()).collect::<String>(),
+            kept == sent,
+        ));
         assert_eq!(got.last().unwrap().0, posted, "case {}", got.len());
         h.runtime.close().await.unwrap();
     }

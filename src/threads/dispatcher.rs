@@ -20,6 +20,7 @@ use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
+use unicode_normalization::UnicodeNormalization;
 
 static VERDICT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -43,57 +44,36 @@ pub(crate) fn subjects(brief: &str) -> Vec<String> {
         .map(|m| format!("{}#{}", key(&m).0, key(&m).1))
         .collect()
 }
-/// A text's lines outside code fences that start with "verdict" in any case
-/// after any non-letters, if one has "VERDICT"; its other lines; and whether
-/// a fence is left open.
-pub(crate) fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>, bool) {
-    let mut fence = None;
-    let (lines, rest): (Vec<_>, _) = text.lines().partition(|line| {
-        let body = line.trim_start();
-        let indent = line.len() - body.len();
-        let c = body.chars().next().filter(|c| matches!(c, '`' | '~'));
-        let run = c.map_or(0, |c| body.len() - body.trim_start_matches(c).len());
-        match (fence, c) {
-            (Some((f, n)), Some(c))
-                if c == f && run >= n && indent < 4 && body.trim_end().len() == run =>
-            {
-                fence = None
-            }
-            (None, Some(c))
-                if run >= 3 && indent < 4 && !(c == '`' && body[run..].contains('`')) =>
-            {
-                fence = Some((c, run))
-            }
-            _ => {}
-        }
-        let core = body.trim_start_matches(|c: char| !c.is_alphabetic());
-        fence.is_none()
-            && core
-                .get(..7)
-                .is_some_and(|w| w.eq_ignore_ascii_case("verdict"))
-    });
-    match lines.iter().any(|l| l.contains("VERDICT")) {
-        true => (lines, rest, fence.is_some()),
-        false => (vec![], text.lines().collect(), false),
-    }
+/// Whether a line holds the word verdict in any case or width (NFKC), with
+/// characters that print nothing, such as a zero-width space, left out.
+fn says_verdict(line: &str) -> bool {
+    let kept = line
+        .nfkc()
+        .filter(|c| c.is_ascii() || c.is_alphanumeric() || c.is_whitespace());
+    kept.collect::<String>().to_lowercase().contains("verdict")
+}
+/// A text's lines holding the word verdict, inside code or not, and the rest.
+fn verdicts(text: &str) -> (Vec<&str>, Vec<&str>) {
+    text.lines().partition(|l| says_verdict(l))
 }
 const UNPARSED: &str = "Not signed: unparsed verdict line: ";
-const UNCLOSED: &str = "Not signed: unclosed code fence.";
-/// The text with its verdict lines first, so a split keeps them in the post;
-/// a line that does not parse as written, or a fence left open, becomes its
-/// refusal now, before rendering trims the text or a split cuts a fence.
+/// The text with its verdict lines first, so a cut or split keeps them all in
+/// the post; if one has "VERDICT", a line that does not parse as written
+/// becomes its refusal now, before rendering trims the text.
 pub(crate) fn hoist(text: &str) -> String {
-    let (lines, rest, open) = verdicts(text);
-    if lines.is_empty() {
+    let (lines, rest) = verdicts(text);
+    if !lines.iter().any(|l| l.contains("VERDICT")) {
         return text.into();
     }
-    let lines = lines.iter().map(|l| match VERDICT.is_match(l.trim_end()) {
-        true => l.to_string(),
-        false => format!("{UNPARSED}{}", l.trim()),
-    });
-    let open = (open && !rest.contains(&UNCLOSED)).then(|| UNCLOSED.to_string());
+    let lines =
+        lines.iter().map(
+            |l| match VERDICT.is_match(l.trim_end()) || l.starts_with(UNPARSED) {
+                true => l.to_string(),
+                false => format!("{UNPARSED}{}", l.trim()),
+            },
+        );
     let rest = rest.iter().map(|l| l.to_string());
-    lines.chain(open).chain(rest).collect::<Vec<_>>().join("\n")
+    lines.chain(rest).collect::<Vec<_>>().join("\n")
 }
 
 pub struct Dispatcher<D: Delivery> {
@@ -107,75 +87,47 @@ pub struct Dispatcher<D: Delivery> {
     pub heads: Option<Arc<dyn Api>>,
 }
 impl<D: Delivery> Dispatcher<D> {
-    /// Turns each `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` line outside
-    /// code fences (provision04) into one line on top: the SIGN-OFF line only
-    /// if the PR is one the job's brief names (`review`) and its head, read
-    /// now, is still `<sha>`; else why it was not signed.
+    /// Turns a `VERDICT <owner>/<repo>#<PR> <sha> <verdict>` line into one
+    /// line on top (provision04): the SIGN-OFF line only if no other line has
+    /// the word verdict, a person's ask or the job's brief names the PR
+    /// (`review`), and its head, read now, is still `<sha>`; else why not.
     async fn sign(&self, text: &str, review: &[String]) -> String {
-        let (lines, rest, _) = verdicts(text);
-        let (mut top, mut first) = (vec![], None);
-        // Only an unindented line outside lists and quotes parses; any other
-        // verdict-like line signs nothing in the message.
-        let parsed: Vec<_> = lines
-            .iter()
-            .map(|l| VERDICT.captures(l.trim_end()))
-            .collect();
-        for (line, m) in lines.iter().zip(&parsed) {
-            let Some(m) = m else {
-                top.push(format!("{UNPARSED}{}", line.trim()));
-                continue;
-            };
-            let ((repo, n), sha, verdict) = (key(m), &m[3], &m[4]);
-            let live = match &self.heads {
-                _ if parsed.iter().any(Option::is_none)
-                    || rest.iter().any(|l| l.starts_with(UNPARSED)) =>
-                {
-                    Err("unparsed verdict line".into())
-                }
-                _ if rest.contains(&UNCLOSED) => Err("unclosed code fence".into()),
-                _ if review.is_empty() => Err("no review subject".into()),
-                _ if !review.contains(&format!("{repo}#{n}")) => {
-                    Err(format!("the job reviews {}", review.join(", ")))
-                }
-                _ if parsed
-                    .iter()
-                    .flatten()
-                    .any(|o| key(o) == key(m) && (&o[3], &o[4]) != (&m[3], &m[4])) =>
-                {
-                    Err("conflicting verdicts".into())
-                }
-                _ if *first.get_or_insert_with(|| repo.clone()) != repo => {
-                    Err("one repository per message".into())
-                }
-                Some(api) => api
-                    .get(Request {
-                        repo: repo.clone(),
-                        operation: Operation::Pull { number: n },
-                    })
-                    .await
-                    .map_err(|e| format!("head not read: {}", e.message()))
-                    .and_then(|v| {
-                        v["head"]["sha"]
-                            .as_str()
-                            .map(str::to_owned)
-                            .ok_or("head not read".into())
-                    }),
-                None => Err("head not read: GitHub is off".into()),
-            };
-            let line = match live {
-                Ok(live) if live == sha => format!("SIGN-OFF #{n} {sha} {verdict}"),
-                Ok(live) => format!("#{n} not signed: its head moved from {sha} to {live}."),
-                Err(why) => format!("#{n} not signed: {why}."),
-            };
-            if !top.contains(&line) {
-                top.push(line);
-            }
-        }
-        if top.is_empty() {
+        let (lines, _) = verdicts(text);
+        let Some(m) = lines.iter().find_map(|l| VERDICT.captures(l.trim_end())) else {
             return text.into();
-        }
-        top.extend(rest.into_iter().map(str::to_owned));
-        top.join("\n")
+        };
+        let ((repo, n), sha, verdict) = (key(&m), &m[3], &m[4]);
+        let live = match &self.heads {
+            _ if lines.len() > 1 => Err("the word verdict appears on more than one line".into()),
+            _ if review.is_empty() => Err("no review subject".into()),
+            _ if !review.contains(&format!("{repo}#{n}")) => {
+                Err(format!("the job reviews {}", review.join(", ")))
+            }
+            Some(api) => api
+                .get(Request {
+                    repo: repo.clone(),
+                    operation: Operation::Pull { number: n },
+                })
+                .await
+                .map_err(|e| format!("head not read: {}", e.message()))
+                .and_then(|v| {
+                    v["head"]["sha"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or("head not read".into())
+                }),
+            None => Err("head not read: GitHub is off".into()),
+        };
+        let top = match live {
+            Ok(live) if live == sha => format!("SIGN-OFF #{n} {sha} {verdict}"),
+            Ok(live) => format!("#{n} not signed: its head moved from {sha} to {live}."),
+            Err(why) => format!("#{n} not signed: {why}."),
+        };
+        let rest = text.lines().filter(|l| l.trim_end() != &m[0]);
+        std::iter::once(top.as_str())
+            .chain(rest)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
     /// Bound each pass so intake/control tasks cannot be starved by a busy queue.
     pub async fn drain(&self, limit: usize) -> Result<usize> {
