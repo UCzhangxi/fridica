@@ -1,7 +1,7 @@
 pub use crate::config::prompts::UNTRUSTED;
 use crate::config::prompts::{ACTION, DEBRIEF, TRIAGE};
 use crate::{
-    config::{contract, repos, Config},
+    config::{contract, Config},
     core::parent::ParentRequest,
 };
 use anyhow::{bail, Result};
@@ -12,7 +12,6 @@ pub fn build(
     request: &ParentRequest,
 ) -> Result<(String, serde_json::Value, String)> {
     let rules = contract::load(config.owner.contract.as_deref())?;
-    let repositories = repos::load(config.parent.repos.as_deref())?;
     let (instructions, schema, model) = match request.call.as_str() {
         "triage" => (
             format!("{}\n{TRIAGE}", rules.participation),
@@ -53,12 +52,18 @@ pub fn build(
     let linked_threads = session
         .as_object_mut()
         .and_then(|s| s.remove("linked_threads"));
-    let mut data = json!({"now":request.session["now"],"owner_id":config.owner.slack_user,"profile":config.owner.profile,"repositories":repositories,
+    let mut data = json!({"now":request.session["now"],"owner_id":config.owner.slack_user,"profile":config.owner.profile,
         "session":session,"trigger":trigger,"history":history,"obligations":request.obligations,"linked":request.linked,
         "machines":request.session["machines"],"workers":request.session["work"]["workers"],
         "delegation_allowed":request.session["channel"].as_str().is_some_and(|c|config.slack.may_delegate(c)) && request.session["driver"]!="external",
         "limits":{"reply_chars":config.limits.reply_chars,"max_delegations":config.limits.max_delegations_per_turn,"max_workers":config.limits.max_workers_per_thread},
         "repair":{"errors":request.errors,"previous_answer":request.previous}});
+    if config.github.mcp.enabled {
+        data["github_mcp_workspaces"] = json!(config.machines.machines.iter().flat_map(|m|
+            m.workspaces.iter().filter_map(|w| crate::github::mcp::target(config, &m.name, &w.policy)
+                .map(|_| json!({"machine":m.name,"workspace":w.name,"read_only":w.policy.mode=="read-only"}))))
+            .collect::<Vec<_>>());
+    }
     if request.call != "triage" && !request.github_state.is_empty() {
         data["github_state"] = json!(request.github_state);
     }

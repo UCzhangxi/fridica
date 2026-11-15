@@ -29,7 +29,7 @@ pub struct Target {
 pub struct Report {
     pub build_version: &'static str,
     pub config_fingerprint: String,
-    /// Host paths and the owner's contract and repository files.
+    /// Host paths and the owner's contract.
     pub host: Vec<Check>,
     pub parent_backend: String,
     pub parent: Vec<Check>,
@@ -70,9 +70,7 @@ pub async fn check(
     }) {
         report.host.push(Check::HostPathsRefused);
     }
-    if crate::config::contract::load(config.owner.contract.as_deref()).is_err()
-        || crate::config::repos::load(config.parent.repos.as_deref()).is_err()
-    {
+    if crate::config::contract::load(config.owner.contract.as_deref()).is_err() {
         report.host.push(Check::OwnerInputsRefused);
     }
     if !report.host.is_empty() {
@@ -145,6 +143,22 @@ pub async fn check(
                         )
                         .await,
                     );
+                    if !*stop.borrow()
+                        && crate::github::mcp::target(config, &machine.name, &workspace.policy)
+                            .is_some()
+                        && !crate::github::mcp::probe(
+                            config,
+                            &context.home,
+                            environment.clone(),
+                            machine,
+                            workspace,
+                            timeout,
+                        )
+                        .await
+                        .unwrap_or(false)
+                    {
+                        refusals.push(Check::GithubMcpFailed);
+                    }
                     refusals.sort();
                     refusals.dedup();
                 }

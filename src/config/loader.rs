@@ -134,7 +134,6 @@ pub fn parse(source: &str, path: &Path, context: &LoadContext) -> Result<Config>
     if parent.context_chars < 2000 {
         bail!("parent.context_chars must be at least 2000");
     }
-    parent.repos = parent.repos.map(|p| file(&p, base, context)).transpose()?;
     let limits: Limits = decode(root.get("limits"))?;
     let placement: Placement = decode(root.get("placement"))?;
     number(placement.probe_ttl, 0., "placement.probe_ttl")?;
@@ -283,15 +282,15 @@ pub fn parse(source: &str, path: &Path, context: &LoadContext) -> Result<Config>
     };
     registry.validate()?;
     // Workers see the target's normal files so git push/commit and gh work; only
-    // Fridica's own daemon files are hidden, automatically. Workers never get
-    // MCP servers, so there is no inventory to review either.
+    // Fridica's own daemon files are hidden, automatically. Ambient MCP servers
+    // are disabled; explicit host servers need no ambient inventory.
     if let Some(table) = root.get("isolation").and_then(Item::as_table_like) {
         if table.contains_key("private_files") {
             bail!("isolation private_files was removed: workers now see the target's normal files; delete the setting");
         }
         for key in super::isolation::REMOVED {
             if table.contains_key(key) {
-                bail!("isolation {key} was removed: workers always run without MCP servers and confinement needs no inventory; delete the setting (and any [isolation.remote.*] tables)");
+                bail!("isolation {key} was removed: ambient MCP servers are disabled and confinement needs no inventory; delete the setting (and any [isolation.remote.*] tables)");
             }
         }
     }
@@ -324,6 +323,7 @@ pub fn parse(source: &str, path: &Path, context: &LoadContext) -> Result<Config>
         path,
         fingerprint: format!("{:x}", Sha256::digest(source.as_bytes())),
     };
+    super::github_mcp::validate(&config)?;
     protect(&config, context)?;
     Ok(config)
 }
@@ -525,7 +525,6 @@ fn protect(config: &Config, context: &LoadContext) -> Result<()> {
     let mut protected = context.protected.clone();
     protected.push(config.path.clone());
     protected.extend(config.owner.contract.iter().cloned());
-    protected.extend(config.parent.repos.iter().cloned());
     for machine in &config.machines.machines {
         if machine.remote() {
             continue;

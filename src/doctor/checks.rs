@@ -202,11 +202,6 @@ pub async fn run_with(
         config::contract::load(config.owner.contract.as_deref()).is_ok(),
         "invalid or unreadable agent contract",
     );
-    report.test(
-        "Repository list",
-        config::repos::load(config.parent.repos.as_deref()).is_ok(),
-        "invalid or unreadable repository list",
-    );
     for (name, variable, prefix) in [
         ("Slack app token", &config.slack.app_token_env, "xapp-"),
         ("Slack user token", &config.slack.user_token_env, "xoxp-"),
@@ -353,6 +348,22 @@ async fn machine(
                 result == "passed",
                 "workspace is not an accessible directory on this target",
             );
+            if crate::github::mcp::target(&probe.config, &machine.name, &workspace.policy).is_some()
+                && !*probe.stop.borrow()
+            {
+                let passed = crate::github::mcp::probe(
+                    &probe.config,
+                    &probe.context.home,
+                    probe.environment.clone(),
+                    machine,
+                    workspace,
+                    probe.timeout,
+                )
+                .await
+                .unwrap_or(false);
+                report.test(format!("GitHub MCP {}:{}", machine.name, workspace.name), passed,
+                    "GitHub MCP executable, authentication, initialization or required tools unavailable");
+            }
         }
         let auto = machine
             .workspaces
